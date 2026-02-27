@@ -2,24 +2,22 @@
 Meteora (Solana) — DeFi trader screener (DLMM).
 
 Install dependencies before running:
-    pip install requests tabulate
+    pip install requests streamlit pandas
 
 Run:
-    python meteora_top_pools.py
-    python meteora_top_pools.py --top 15
-    python meteora_top_pools.py --min-tvl 50000
-
+    streamlit run meteora_top_pools.py
 
 """
 
 from __future__ import annotations
 
-import argparse
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
 
+import pandas as pd
 import requests
-from tabulate import tabulate
+import streamlit as st
 
 
 DLMM_POOLS_API = "https://dlmm.datapi.meteora.ag/pools"
@@ -185,47 +183,78 @@ def fetch_most_profitable_pools(*, top_n: int, min_tvl_usd: float) -> List[PoolR
     return collected[:top_n]
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(
-        description="Print Meteora most profitable pools (24h yield) with TVL filter."
+def _rows_to_dataframe(rows: List[PoolRow]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "Pool Name": r.name,
+                "TVL": r.tvl_usd,
+                "24h Yield (%)": r.yield24_pct,
+                "Fees 24h": r.fees24_usd,
+                "Link (Meteora)": r.meteora_link,
+                "dex (gmgn.ai)": r.dex_link,
+            }
+            for r in rows
+        ]
     )
-    ap.add_argument(
-        "--top", type=int, default=15, help="How many pools to show (default: 15)."
-    )
-    ap.add_argument(
-        "--min-tvl",
-        type=float,
-        default=50_000,
-        help="Strict TVL floor in USD (default: 50000).",
-    )
-    args = ap.parse_args()
 
-    rows = fetch_most_profitable_pools(
-        top_n=max(1, int(args.top)), min_tvl_usd=float(args.min_tvl)
-    )
-    table = [
-        {
-            "Pool Name": r.name,
-            "TVL": _format_usd(r.tvl_usd),
-            "24h Yield (%)": _format_pct(r.yield24_pct),
-            "Fees 24h": _format_usd(r.fees24_usd),
-            "Link (Meteora)": r.meteora_link,
-            "dex (gmgn.ai)": r.dex_link,
-        }
-        for r in rows
-    ]
 
-    print(
-        tabulate(
-            table,
-            headers="keys",
-            tablefmt="github",
-            showindex=False,
-            colalign=("left", "right", "right", "right", "left", "left"),
+@st.cache_data(show_spinner=False)
+def _load_data(top_n: int, min_tvl_usd: float) -> pd.DataFrame:
+    rows = fetch_most_profitable_pools(top_n=top_n, min_tvl_usd=min_tvl_usd)
+    df = _rows_to_dataframe(rows)
+    df = df.sort_values(by="24h Yield (%)", ascending=False, kind="mergesort")
+    return df
+
+
+def _render_table(df: pd.DataFrame) -> None:
+    # Prefer Streamlit's native link columns; fall back to HTML if unavailable.
+    try:
+        st.dataframe(
+            df,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "TVL": st.column_config.NumberColumn("TVL", format="$%,.0f"),
+                "Fees 24h": st.column_config.NumberColumn("Fees 24h", format="$%,.0f"),
+                "24h Yield (%)": st.column_config.NumberColumn("24h Yield (%)", format="%.1f%%"),
+                "Link (Meteora)": st.column_config.LinkColumn("Link (Meteora)"),
+                "dex (gmgn.ai)": st.column_config.LinkColumn("dex (gmgn.ai)"),
+            },
         )
-    )
-    return 0
+    except Exception:
+        df2 = df.copy()
+        df2["TVL"] = df2["TVL"].map(_format_usd)
+        df2["Fees 24h"] = df2["Fees 24h"].map(_format_usd)
+        df2["24h Yield (%)"] = df2["24h Yield (%)"].map(_format_pct)
+        st.write(df2.to_html(escape=False, render_links=True, index=False), unsafe_allow_html=True)
+
+
+def app() -> None:
+    st.set_page_config(page_title="Meteora DeFi Yield Tracker", layout="wide")
+    st.title("🚀 Meteora DeFi Yield Tracker")
+
+    top_n = 20
+    min_tvl_usd = 50_000.0
+
+    if "last_updated" not in st.session_state:
+        st.session_state.last_updated = None
+
+    col_a, col_b = st.columns([1, 5])
+    with col_a:
+        refresh = st.button("Refresh Data", type="primary")
+
+    if refresh:
+        _load_data.clear()
+
+    with st.spinner("Loading pools from Meteora..."):
+        df = _load_data(top_n=top_n, min_tvl_usd=min_tvl_usd)
+
+    st.session_state.last_updated = datetime.now().astimezone()
+    st.caption(f"Last updated: {st.session_state.last_updated.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+    _render_table(df)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    app()

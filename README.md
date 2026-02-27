@@ -10,21 +10,13 @@ Python script that pulls liquidity pool metrics from Meteora (Solana) via public
 ### Install
 
 ```bash
-pip install requests tabulate
+pip install requests streamlit pandas
 ```
 
 ### Run
 
 ```bash
-python meteora_top_pools.py
+streamlit run meteora_top_pools.py
 ```
-
-Optional flags:
-
-```bash
-python meteora_top_pools.py --top 15 --min-tvl 50000
-```
-
-- `--top`: number of pools to display (default: 15)
-- `--min-tvl`: strict TVL filter in USD (default: 50000; only pools with TVL **>** this value are shown)
+Then open the local URL shown in your terminal (usually `http://localhost:8501`).
 
